@@ -35,6 +35,7 @@ namespace Ryujinx.Graphics.Gpu.Image
         private GpuContext _context;
 
         private int[] _allOffsets;
+        private int[] _sliceSizes;
         private bool _is3D;
         private bool _hasMipViews;
         private bool _hasLayerViews;
@@ -68,11 +69,13 @@ namespace Ryujinx.Graphics.Gpu.Image
         /// <summary>
         /// Initialize a new texture group's dirty regions and offsets.
         /// </summary>
+        /// <param name="size">Size info for the storage texture</param>
         /// <param name="hasLayerViews">True if the storage will have layer views</param>
         /// <param name="hasMipViews">True if the storage will have mip views</param>
         public void Initialize(ref SizeInfo size, bool hasLayerViews, bool hasMipViews)
         {
             _allOffsets = size.AllOffsets;
+            _sliceSizes = size.SliceSizes;
 
             (_hasLayerViews, _hasMipViews) = PropagateGranularity(hasLayerViews, hasMipViews);
 
@@ -272,7 +275,7 @@ namespace Ryujinx.Graphics.Gpu.Image
         /// <summary>
         /// Register a read/write action to flush for a texture group.
         /// </summary>
-        /// <param name="group">The group to register an action for.</param>
+        /// <param name="group">The group to register an action for</param>
         public void RegisterAction(TextureGroupHandle group)
         {
             foreach (CpuRegionHandle handle in group.Handles)
@@ -282,28 +285,11 @@ namespace Ryujinx.Graphics.Gpu.Image
         }
 
         /// <summary>
-        /// Calculate a single view's data size. This is used to better affirm the bounds of 2D sub-images,
-        /// and is particularly useful for layer strided Texture2DArrays, where a handle's calculated size
-        /// shouldn't cover anything between layers, such as mip levels.
-        /// </summary>
-        /// <param name="level">The level of the view</param>
-        /// <returns>The view's size in bytes</returns>
-        private int CalculateViewDataSize(int level)
-        {
-            int blockWidth = BitUtils.DivRoundUp(Storage.Info.Width, Storage.Info.FormatInfo.BlockWidth);
-
-            int width = Math.Max(blockWidth >> level, 1) * Storage.Info.FormatInfo.BytesPerPixel;
-            width = BitUtils.AlignUp(width, Storage.Info.IsLinear ? StrideAlignment : GobAlignment);
-
-            int height = Math.Max(BitUtils.DivRoundUp(Storage.Info.Height, Storage.Info.FormatInfo.BlockHeight) >> level, 1);
-
-            return width * height;
-        }
-
-        /// <summary>
         /// Propagates the mip/layer view flags depending on the texture type.
         /// When the most granular type of subresource has views, the other type of subresource must be segmented granularly too.
         /// </summary>
+        /// <param name="hasLayerViews">True if the storage has layer views</param>
+        /// <param name="hasMipViews">True if the storage has mip views</param>
         /// <returns>The input values after propagation</returns>
         private (bool HasLayerViews, bool HasMipViews) PropagateGranularity(bool hasLayerViews, bool hasMipViews)
         {
@@ -573,7 +559,7 @@ namespace Ryujinx.Graphics.Gpu.Image
         /// </summary>
         /// <param name="address">The start address of the tracked region</param>
         /// <param name="size">The size of the tracked region</param>
-        /// <returns></returns>
+        /// <returns>A CpuRegionHandle covering the given range</returns>
         private CpuRegionHandle GenerateHandle(ulong address, ulong size)
         {
             return _context.PhysicalMemory.BeginTracking(address, size);
@@ -619,7 +605,7 @@ namespace Ryujinx.Graphics.Gpu.Image
 
             if (_hasLayerViews && _hasMipViews)
             {
-                size = CalculateViewDataSize(firstLevel);
+                size = _sliceSizes[firstLevel];
             }
 
             var groupHandle = new TextureGroupHandle(this, _allOffsets[viewStart], (ulong)size, _views, firstLayer, firstLevel, result.ToArray());
